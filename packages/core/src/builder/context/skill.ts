@@ -1105,8 +1105,20 @@ export class SkillContext<Meta extends ContextMetaBase> {
     if (existed) {
       const existedLayer = existed.variables.layer;
       if (existedLayer > value) {
+        this.mutator.log(
+          DetailLogType.Other,
+          `Attaching of [attachment:${incomingDef}] reduces layer of existing attachment ${stringifyState(
+            existed,
+          )} by ${value}`,
+        );
         this.setVariable("layer", existedLayer - value, existed);
       } else {
+        this.mutator.log(
+          DetailLogType.Other,
+          `Attaching of [attachment:${incomingDef}] removes existing attachment ${stringifyState(
+            existed,
+          )}`,
+        );
         this.mutate({
           type: "removeEntity",
           from: existed.area,
