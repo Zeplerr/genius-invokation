@@ -71,7 +71,7 @@ import type {
 import { DecksService } from "../decks/decks.service";
 import { UsersService, type UserInfo } from "../users/users.service";
 import { GamesService } from "../games/games.service";
-import { redis, semver } from "bun";
+import { redis, s3, semver } from "bun";
 
 interface RoomConfig extends Partial<GameConfig> {
   initTotalActionTime: number; // defaults 45
@@ -429,6 +429,8 @@ class Room {
   private stateLog: GameStateLogEntry[] = [];
   private terminated = false;
   private onStopHandlers: GameStopHandler[] = [];
+  private startedAt: Date | null = null;
+  private endedAt: Date | null = null;
 
   constructor(
     public readonly id: number,
@@ -502,6 +504,7 @@ class Room {
         `Failed to create initial game state: ${e}; propably due to invalid decks`,
       );
     }
+    this.startedAt = new Date();
     const game = new InternalGame(state);
     game.onPause = async (state, mutations, canResume) => {
       this.stateLog.push({ state, canResume });
@@ -557,6 +560,7 @@ class Room {
 
   stop() {
     this.terminated = true;
+    this.endedAt = new Date();
     this.players[0]?.complete();
     this.players[1]?.complete();
     for (const cb of this.onStopHandlers) {
@@ -569,9 +573,20 @@ class Room {
   }
 
   getStateLog() {
+    const players = ([0, 1] as const)
+      .map((who) => {
+        const player = this.getPlayer(who)?.playerInfo;
+        return player && { who, id: player.id, name: player.name };
+      });
     return {
       ...serializeGameStateLog(this.stateLog),
       gv: this.config.gameVersion,
+      m: {
+        roomId: this.id,
+        startedAt: this.startedAt?.toISOString() ?? null,
+        endedAt: this.endedAt?.toISOString() ?? null,
+        players,
+      },
     };
   }
 
@@ -907,6 +922,22 @@ export class RoomsService {
         return;
       }
       const players = room.getPlayers();
+      const gameData = JSON.stringify(room.getStateLog());
+      if (process.env.S3_BUCKET) {
+        const now = new Date().toISOString();
+        const date = now.slice(0, 10);
+        const time = now.slice(11, 19).replaceAll(":", "");
+        const s3Prefix = process.env.S3_PREFIX;
+        const keyPrefix = s3Prefix ? `${s3Prefix}/` : "";
+        s3
+          .file(`${keyPrefix}logs/${date}/${time}-${room.id}.json`)
+          .write(gameData, { type: "application/json" })
+          .catch((error) => {
+            this.logger.warn(
+              `Failed to upload room ${room.id} game log: ${error}`,
+            );
+          });
+      }
       if (players.some((p) => p.playerInfo.isGuest)) {
         return;
       }
@@ -918,7 +949,7 @@ export class RoomsService {
       this.games.addGame({
         coreVersion: Room.CORE_VERSION,
         gameVersion: room.config.gameVersion,
-        data: JSON.stringify(room.getStateLog()),
+        data: gameData,
         winnerId,
         playerIds,
       });
