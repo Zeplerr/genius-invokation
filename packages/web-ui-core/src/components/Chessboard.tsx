@@ -1,4 +1,5 @@
 // Copyright (C) 2025 Guyutongxue
+// Copyright (C) 2026 Piovium Labs
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as
@@ -59,6 +60,7 @@ import {
   getHandCardBlurredPos,
   getHandCardFocusedPos,
   getHandHintPos,
+  getOppHandCardFocusedPos,
   getPileHintPos,
   getPilePos,
   getShowingCardPos,
@@ -90,7 +92,7 @@ import { NotificationBox } from "./NotificationBox";
 import { Entity } from "./Entity";
 import { PlayerInfoBox, type PlayerInfoProps } from "./PlayerInfoBox";
 import { flip } from "@gi-tcg/utils";
-import { DicePanel, type DicePanelState } from "./DicePanel";
+import { DiceBar, DicePanel, type DicePanelState } from "./DicePanel";
 import { SkillButtonGroup } from "./SkillButtonGroup";
 import { createStore } from "solid-js/store";
 import { RoundAndPhaseNotification } from "./RoundAndPhaseNotification";
@@ -126,7 +128,6 @@ import { ConfirmButton } from "./ConfirmButton";
 import { TuningArea } from "./TuningArea";
 import { RerollDiceView } from "./RerollDiceView";
 import { SelectCardView } from "./SelectCardView";
-import { SpecialViewBackdrop } from "./ViewPanelBackdrop";
 import { SwitchHandsView } from "./SwitchHandsView";
 import { HistoryPanel } from "./HistoryViewer";
 import { CurrentTurnHint } from "./CurrentTurnHint";
@@ -140,7 +141,7 @@ import { createAlert } from "./Alert";
 import { createMessageBox } from "./MessageBox";
 import { TimerCapsule, TimerAlert } from "./Timer";
 import type { HistoryBlock } from "../history/typings";
-import { FastActionMarker } from "./FastActionMarker";
+import { BottomHint } from "./BottomHint";
 import { TransformWrapper, type Rotation } from "./TransformWrapper";
 import { MiniSpecialViewGroup } from "./MiniSpecialView";
 import type { OppInfo } from "../opp";
@@ -306,7 +307,7 @@ export interface ChessboardProps extends ComponentProps<"div"> {
   onGiveUp?: () => void;
 }
 
-type MyHandState =
+type HandState =
   | "focusing" // 聚焦手牌显示
   | "blurred" // 正常收起手牌
   | "hidden" // 不显示手牌（行动中）
@@ -315,7 +316,8 @@ type MyHandState =
 interface CardInfoCalcContext {
   who: 0 | 1;
   size: Size;
-  myHandState: MyHandState;
+  myHandState: HandState;
+  oppHandState: HandState;
   triggeringEntities: number[];
   hoveringHand: CardInfo | null;
   draggingHand: DraggingCardInfo | null;
@@ -331,6 +333,7 @@ function calcCardsInfo(
     who,
     size,
     myHandState,
+    oppHandState,
     triggeringEntities,
     hoveringHand,
     availableSteps,
@@ -358,7 +361,7 @@ function calcCardsInfo(
           transform: {
             x,
             y,
-            z: (pileSize - 1 - i) * 0.15,
+            z: (pileSize - 1 - i) * 0.1,
             ry: 180,
             rz: 90,
           },
@@ -377,7 +380,9 @@ function calcCardsInfo(
     const totalHandCardCount = handCard.length;
     const skillCount = player.initiativeSkill.length;
 
-    const isFocus = !opp && myHandState === "focusing";
+    const isFocus =
+      (!opp && myHandState === "focusing") ||
+      (opp && hasOppChessboard && oppHandState === "focusing");
     const isSwitching = !opp && myHandState === "switching";
     const z = isSwitching ? DRAGGING_Z : isFocus ? FOCUSING_HANDS_Z : 1;
     const ry = isFocus ? 1 : opp && !hasOppChessboard ? 181 : 1;
@@ -406,11 +411,17 @@ function calcCardsInfo(
         continue;
       }
       let x, y;
-      let rz = 0;
       if (!opp && myHandState === "switching") {
         [x, y] = getShowingCardPos(size, totalHandCardCount, i);
       } else if (!opp && myHandState === "focusing") {
         [x, y] = getHandCardFocusedPos(
+          size,
+          totalHandCardCount,
+          i,
+          hoveringHandIndex,
+        );
+      } else if (opp && hasOppChessboard && oppHandState === "focusing") {
+        [x, y] = getOppHandCardFocusedPos(
           size,
           totalHandCardCount,
           i,
@@ -425,11 +436,9 @@ function calcCardsInfo(
           i,
           skillCount,
         );
-      }
-      if (opp && hasOppChessboard) {
-        x -= MINIMUM_WIDTH / 4;
-        y += CARD_HEIGHT;
-        rz = 180;
+        if (opp && hasOppChessboard) {
+          x -= MINIMUM_WIDTH / 6;
+        }
       }
       cards.push({
         id: card.id,
@@ -444,11 +453,11 @@ function calcCardsInfo(
             y,
             z,
             ry,
-            rz,
+            rz: 0,
           },
           draggingEndAnimation: false,
         },
-        enableShadow: true,
+        enableShadow: !isSwitching,
         enableTransition: true,
         playStep,
         tuneStep,
@@ -613,7 +622,8 @@ interface ChessboardChildren {
 function rerenderChildren(opt: {
   who: 0 | 1;
   size: Size;
-  myHandState: MyHandState;
+  myHandState: HandState;
+  oppHandState: HandState;
   hoveringHand: CardInfo | null;
   draggingHand: DraggingCardInfo | null;
   data: ChessboardData;
@@ -624,6 +634,7 @@ function rerenderChildren(opt: {
   const {
     size,
     myHandState,
+    oppHandState,
     hoveringHand,
     draggingHand,
     data,
@@ -644,12 +655,14 @@ function rerenderChildren(opt: {
   for (const who of [0, 1] as const) {
     const opp = who !== opt.who;
     const player = state.player[who];
+    const oppFocused =
+      opp && opt.hasOppChessboard && opt.oppHandState === "focusing";
     cardCountHints.push({
       area: opp ? "oppPile" : "myPile",
       value: player.pileCard.length,
       transform: {
         ...getPileHintPos(size, opp),
-        z: 0,
+        z: player.pileCard.length * 0.1,
         ...COUNT_HINT_TRANSFORM_BASE,
       },
     });
@@ -657,9 +670,9 @@ function rerenderChildren(opt: {
       area: opp ? "oppHand" : "myHand",
       value: player.handCard.length,
       transform: {
-        ...getHandHintPos(size, opp, player.handCard.length),
+        ...getHandHintPos(size, opp, player.handCard.length, oppFocused),
         ...COUNT_HINT_TRANSFORM_BASE,
-        z: opp ? 2 : FOCUSING_HANDS_Z,
+        z: opp && !oppFocused ? 2 : FOCUSING_HANDS_Z,
       },
     });
   }
@@ -669,6 +682,7 @@ function rerenderChildren(opt: {
     who: opt.who,
     size,
     myHandState,
+    oppHandState,
     hoveringHand,
     draggingHand,
     availableSteps,
@@ -681,6 +695,7 @@ function rerenderChildren(opt: {
       who: opt.who,
       size,
       myHandState,
+      oppHandState,
       hoveringHand,
       draggingHand,
       availableSteps: [],
@@ -1077,6 +1092,7 @@ export function Chessboard(props: ChessboardProps) {
       force: true,
     });
   const [getFocusingHands, setFocusingHands] = createSignal(false);
+  const [getOppFocusingHands, setOppFocusingHands] = createSignal(false);
   const [getHoveringHand, setHoveringHand] = createSignal<CardInfo | null>(
     null,
   );
@@ -1103,7 +1119,7 @@ export function Chessboard(props: ChessboardProps) {
     focusing: boolean,
     viewType: ChessboardViewType,
     actionState: ActionState | null,
-  ): MyHandState => {
+  ): HandState => {
     if (
       !localProps.liveStreamingMode &&
       (viewType === "switchHands" || viewType === "switchHandsEnd")
@@ -1128,6 +1144,11 @@ export function Chessboard(props: ChessboardProps) {
             localProps.viewType,
             localProps.actionState,
           ),
+          oppHandState: getHandState(
+            getOppFocusingHands(),
+            "normal",
+            localProps.actionState,
+          ),
           hoveringHand: getHoveringHand(),
           draggingHand: getDraggingHand(),
           data,
@@ -1145,6 +1166,7 @@ export function Chessboard(props: ChessboardProps) {
       [
         () => [height(), width()] as Size,
         getFocusingHands,
+        getOppFocusingHands,
         getHoveringHand,
         getDraggingHand,
         () => localProps.actionState,
@@ -1153,6 +1175,7 @@ export function Chessboard(props: ChessboardProps) {
       ([
         size,
         focusingHands,
+        oppFocusingHands,
         hoveringHand,
         draggingHand,
         actionState,
@@ -1162,6 +1185,7 @@ export function Chessboard(props: ChessboardProps) {
           who: localProps.who,
           size,
           myHandState: getHandState(focusingHands, viewType, actionState),
+          oppHandState: getHandState(oppFocusingHands, "normal", actionState),
           hoveringHand,
           draggingHand,
           data: localProps.data,
@@ -1246,7 +1270,7 @@ export function Chessboard(props: ChessboardProps) {
     }
     const timeout = window.setTimeout(() => {
       setShowCardHint(area, null);
-    }, 500);
+    }, 1500);
     setShowCardHint(area, timeout);
   };
 
@@ -1259,7 +1283,6 @@ export function Chessboard(props: ChessboardProps) {
       (s) => s.type === "declareEnd",
     );
     return {
-      opp: localProps.data.state.currentTurn !== localProps.who,
       roundNumber: localProps.data.state.roundNumber,
       phase: localProps.data.state.phase,
       markerClickable: !!canDeclareEnd,
@@ -1267,6 +1290,8 @@ export function Chessboard(props: ChessboardProps) {
       timingMine: localProps.doingRpc,
       currentTime: localProps.timer?.current ?? 0,
       totalTime: localProps.timer?.total ?? Infinity,
+      willGetFirst:
+        !localProps.data.state.player[flip(localProps.who)].declaredEnd,
       onClick: () => {
         if (canDeclareEnd) {
           if (!showDeclareEndButton()) {
@@ -1314,14 +1339,14 @@ export function Chessboard(props: ChessboardProps) {
   };
   const isTechnique = (id: SkillInfo["id"]): boolean =>
     typeof id === "number" && id.toString().length > 5;
-  const myActiveEnergy = createMemo(() => {
-    const player = localProps.data.state.player[localProps.who];
+  const activeEnergy = (who: 0 | 1) => {
+    const player = localProps.data.state.player[who];
     const { energy = 0, maxEnergy = 1 } =
       player.character.find((ch) => ch.id === player.activeCharacterId) ?? {};
     return { energy, maxEnergy };
-  });
-  const energyPercentage = (): number => {
-    const { energy, maxEnergy } = myActiveEnergy();
+  };
+  const energyPercentage = (who: 0 | 1): number => {
+    const { energy, maxEnergy } = activeEnergy(who);
     return Math.min(energy / maxEnergy, 1);
   };
   const mySkills = createMemo<SkillInfo[]>(() => {
@@ -1335,7 +1360,7 @@ export function Chessboard(props: ChessboardProps) {
         realCost: realCosts?.get(sk.definitionId),
         step: findSkillStep(steps, sk.definitionId),
         isTechnique: isTechnique(sk.definitionId),
-        energy: energyPercentage(),
+        energy: energyPercentage(localProps.who),
       }),
     );
   });
@@ -1350,7 +1375,7 @@ export function Chessboard(props: ChessboardProps) {
         realCost: realCosts?.get(sk.definitionId),
         step: findSkillStep(steps, sk.definitionId),
         isTechnique: isTechnique(sk.definitionId),
-        energy: energyPercentage(),
+        energy: energyPercentage(flip(localProps.who)),
       })) ?? []
     );
   });
@@ -1367,11 +1392,24 @@ export function Chessboard(props: ChessboardProps) {
       return shown;
     }
   });
+  const showOppSkillButtons = createMemo(() => {
+    const shown = !getOppFocusingHands();
+    if (localProps.actionState) {
+      return shown && localProps.actionState.showSkillButtons;
+    } else {
+      return shown;
+    }
+  });
 
   const [specialViewVisible, setSpecialViewVisible] = createSignal(true);
   const hasSpecialView = createMemo(() =>
     ["rerollDice", "rerollDiceEnd", "switchHands", "selectCard"].includes(
       localProps.viewType,
+    ),
+  );
+  const hasOppSpecialView = createMemo(() =>
+    ["rerollDice", "rerollDiceEnd", "switchHands", "selectCard"].includes(
+      localProps.opp?.viewType ?? "normal",
     ),
   );
   const displayUiComponents = createMemo(
@@ -1426,7 +1464,10 @@ export function Chessboard(props: ChessboardProps) {
     currentTarget: HTMLElement,
     cardInfo: CardInfo,
   ) => {
-    if (cardInfo.kind === "myHand") {
+    if (
+      cardInfo.kind === "myHand" ||
+      (cardInfo.kind === "oppHand" && localProps.opp)
+    ) {
       setHoveringHand(cardInfo);
     }
   };
@@ -1435,7 +1476,7 @@ export function Chessboard(props: ChessboardProps) {
     currentTarget: HTMLElement,
     cardInfo: CardInfo,
   ) => {
-    if (getFocusingHands()) {
+    if (getFocusingHands() || getOppFocusingHands()) {
       setHoveringHand((c) => {
         if (c?.id === cardInfo.id) {
           return null;
@@ -1463,7 +1504,9 @@ export function Chessboard(props: ChessboardProps) {
         const doMove = await shouldMoveWhenHandBlurring.promise;
         if (canToggleHandFocus()) {
           setFocusingHands(true);
+          setOppFocusingHands(false);
           showCardHint("myHand");
+          setShowCardHint("oppHand", null);
           setSelectingItem(null);
         }
         if (!doMove) {
@@ -1498,14 +1541,22 @@ export function Chessboard(props: ChessboardProps) {
           return [x, y];
         },
       });
+    } else if (untrack(() => localProps.opp) && cardInfo.kind === "oppHand") {
+      currentTarget.setPointerCapture(e.pointerId);
+      if (!getOppFocusingHands() && canToggleHandFocus()) {
+        setOppFocusingHands(true);
+        setFocusingHands(false);
+        showCardHint("oppHand");
+        setShowCardHint("myHand", null);
+        setSelectingItem(null);
+        return;
+      }
+      setSelectingItem({ type: "card", info: cardInfo });
     } else if (
       cardInfo.kind === "myPile" ||
       cardInfo.kind === "oppHand" ||
       cardInfo.kind === "oppPile"
     ) {
-      if (untrack(() => localProps.opp) && cardInfo.kind === "oppHand") {
-        setSelectingItem({ type: "card", info: cardInfo });
-      }
       showCardHint(cardInfo.kind);
     }
   };
@@ -1528,6 +1579,10 @@ export function Chessboard(props: ChessboardProps) {
       const shouldFocusingHand = shouldFocusHandWhenDragging(size, y);
       setFocusingHands(shouldFocusingHand);
       setShowCardHint("myHand", null);
+      if (shouldFocusingHand) {
+        setOppFocusingHands(false);
+        setShowCardHint("oppHand", null);
+      }
     }
     setDraggingHand({
       ...dragging,
@@ -1544,16 +1599,18 @@ export function Chessboard(props: ChessboardProps) {
     shouldMoveWhenHandBlurring?.resolve(false);
     const dragging = getDraggingHand();
     const focusingHands = getFocusingHands();
-    if (dragging?.id !== cardInfo.id) {
+    const size = [height(), width()] as Size;
+    if (dragging?.id !== cardInfo.id || cardInfo.kind === "oppHand") {
       return;
     }
-    const [tuningAreaX] = getTuningAreaPos([height(), width()], dragging);
+    const [tuningAreaX] = getTuningAreaPos(size, dragging);
+    const shouldFocusingHand = shouldFocusHandWhenDragging(size, dragging.y);
     if (cardInfo.tuneStep && dragging.x + CARD_WIDTH > tuningAreaX) {
       localProps.onStepActionState?.(cardInfo.tuneStep, selectedDiceValue());
       setDraggingHand({ ...dragging, status: "end" });
       return;
     }
-    if (!focusingHands && cardInfo.playStep) {
+    if (!shouldFocusingHand && cardInfo.playStep) {
       localProps.onStepActionState?.(cardInfo.playStep, selectedDiceValue());
       if (cardInfo.playStep.playable) {
         setDraggingHand({ ...dragging, status: "end" });
@@ -1574,6 +1631,8 @@ export function Chessboard(props: ChessboardProps) {
         setFocusingHands(false);
         setShowCardHint("myHand", null);
       }
+      setOppFocusingHands(false);
+      setShowCardHint("oppHand", null);
       setShowDeclareEndButton(false);
       setDraggingHand(null);
       setHoveringHand(null);
@@ -1593,6 +1652,8 @@ export function Chessboard(props: ChessboardProps) {
       setFocusingHands(false);
       setShowCardHint("myHand", null);
     }
+    setOppFocusingHands(false);
+    setShowCardHint("oppHand", null);
     setShowDeclareEndButton(false);
     if (!props.actionState?.showBackdrop) {
       setSelectingItem({ type: "character", info: characterInfo });
@@ -1614,6 +1675,8 @@ export function Chessboard(props: ChessboardProps) {
       setFocusingHands(false);
       setShowCardHint("myHand", null);
     }
+    setOppFocusingHands(false);
+    setShowCardHint("oppHand", null);
     setShowDeclareEndButton(false);
     if (!props.actionState?.showBackdrop) {
       setSelectingItem({ type: "entity", info: entityInfo });
@@ -1639,6 +1702,25 @@ export function Chessboard(props: ChessboardProps) {
         localProps.onStepActionState?.(step, selectedDiceValue());
       }
     }
+  };
+
+  const onOppSkillClick = (sk: SkillInfo) => {
+    setShowDeclareEndButton(false);
+    setSelectingItem({
+      type: "skill",
+      info: { ...sk, id: sk.id as number },
+    });
+    setFocusingHands(false);
+    setShowCardHint("myHand", null);
+  };
+
+  const onMiniViewCardClick = (card: number) => {
+    setSelectingItem(null);
+    dataViewerController.showCard(card);
+    setFocusingHands(false);
+    setShowCardHint("myHand", null);
+    setOppFocusingHands(false);
+    setShowCardHint("oppHand", null);
   };
 
   let containerElement!: HTMLDivElement;
@@ -1684,7 +1766,7 @@ export function Chessboard(props: ChessboardProps) {
       {...elProps}
     >
       <TransformWrapper
-        class="absolute left-0"
+        class="absolute left-0 grid place-items-center children:grid-area-[1/1]"
         autoHeight={localProps.autoHeight}
         rotation={localProps.rotation}
         hasOppChessboard={!!localProps.opp}
@@ -1694,7 +1776,7 @@ export function Chessboard(props: ChessboardProps) {
         <ChessboardBackground color={localProps.chessboardColor} />
         {/* 3d space */}
         <div
-          class="relative h-full w-full preserve-3d select-none"
+          class="relative h-full w-full preserve-3d select-none z-1"
           ref={chessboardElement}
           onClick={onChessboardClick}
           style={{
@@ -1709,6 +1791,7 @@ export function Chessboard(props: ChessboardProps) {
               <CharacterArea
                 {...character()}
                 selecting={character().id === selectingItem()?.info.id}
+                hidden={hasSpecialView() && specialViewVisible()}
                 onClick={(e, t) => onCharacterAreaClick(e, t, character())}
               />
             )}
@@ -1730,7 +1813,7 @@ export function Chessboard(props: ChessboardProps) {
                 }
                 hidden={
                   // 存在特殊视图时：视图可见时只显示正在切换的手牌，反之只显示其他行动牌
-                  hasSpecialView() && !localProps.liveStreamingMode
+                  hasSpecialView()
                     ? (card().kind === "switching") !== specialViewVisible()
                     : false
                 }
@@ -1754,6 +1837,7 @@ export function Chessboard(props: ChessboardProps) {
               <Entity
                 {...entity()}
                 selecting={entity().id === selectingItem()?.info.id}
+                hidden={hasSpecialView() && specialViewVisible()}
                 onClick={(e, t) => onEntityClick(e, t, entity())}
               />
             )}
@@ -1763,18 +1847,17 @@ export function Chessboard(props: ChessboardProps) {
               <CardCountHint
                 {...hint()}
                 shown={
-                  isShowCardHint[hint().area] !== null ||
-                  (!!localProps.liveStreamingMode &&
-                    (hint().area === "myPile" || hint().area === "oppPile"))
+                  isShowCardHint[hint().area] !== null &&
+                  !(hasSpecialView() && specialViewVisible())
                 }
               />
             )}
           </Key>
-          <Show when={hasSpecialView() && specialViewVisible()}>
-            <SpecialViewBackdrop onClick={onChessboardClick} />
-          </Show>
           <ChessboardBackdrop
-            shown={localProps.actionState?.showBackdrop}
+            shown={
+              localProps.actionState?.showBackdrop ||
+              (hasSpecialView() && specialViewVisible())
+            }
             onClick={onChessboardClick}
           />
           <Show when={children().tuningArea}>
@@ -1782,24 +1865,24 @@ export function Chessboard(props: ChessboardProps) {
           </Show>
         </div>
         {/* 下层 UI 组件 */}
-        <AspectRatioContainer>
+        <AspectRatioContainer class="grid children:grid-area-[1/1] isolate z-2">
           <ActionHintText
-            class="absolute left-50% top-50% translate-x--50% translate-y--50%"
+            class="place-self-center"
             text={localProps.actionState?.hintText}
           />
           <Show when={displayUiComponents()}>
             <DeclareEndMarker
-              class={"absolute top-50% translate-y--50% left-1"}
+              class={"self-center declare-end-marker"}
               {...declareEndMarkerProps()}
             />
             <PlayerInfoBox
               opp
-              class="absolute top-0.5 bottom-[calc(50%+2rem)] left-2"
+              class="self-start"
               {...playerInfoPropsOf(flip(localProps.who))}
               {...localProps.oppPlayerInfo}
             />
             <PlayerInfoBox
-              class="absolute top-[calc(50%+2rem)] bottom-0.5 left-2"
+              class="self-end"
               {...playerInfoPropsOf(localProps.who)}
               {...localProps.myPlayerInfo}
             />
@@ -1815,16 +1898,10 @@ export function Chessboard(props: ChessboardProps) {
               onSelectDice={setSelectedDice}
               state={dicePanelState()}
               onStateChange={setDicePanelState}
-              compactView={!!localProps.opp}
-              opp={false}
-              hasMiniView={
-                !!localProps.opp &&
-                (props.viewType === "selectCard" ||
-                  props.viewType === "switchHands")
-              }
+              liveStreamingMode={localProps.liveStreamingMode}
             />
             <SkillButtonGroup
-              class="absolute bottom-2 transform-origin-br scale-120% skill-button-group"
+              class="place-self-end mb-2 mr-6 z-2"
               skills={mySkills()}
               switchActiveButton={switchActiveStep() ?? null}
               switchActiveCost={
@@ -1834,39 +1911,30 @@ export function Chessboard(props: ChessboardProps) {
               shown={showSkillButtons()}
             />
             <Show when={localProps.opp}>
-              <DicePanel
-                state="hidden"
-                dice={oppDice()}
-                disabledDiceTypes={[]}
-                maxSelectedCount={null}
-                onSelectDice={() => {}}
-                onStateChange={() => {}}
-                selectedDice={[]}
-                compactView
+              <DiceBar
+                class="self-start justify-self-end mt-34 mr-5 z-1"
                 opp
-                hasMiniView={
-                  localProps.viewType === "selectCard" ||
-                  localProps.viewType === "switchHands"
-                }
+                dice={oppDice()}
+                selectedDice={[]}
+                // 对方骰子面板的显示状态同样受我方状态控制
+                state={dicePanelState()}
+                liveStreamingMode={localProps.liveStreamingMode}
               />
               <SkillButtonGroup
-                class="absolute top-1.2 transform-origin-tr scale-120% skill-button-group opp"
+                class="self-start justify-self-end mt-12 mr-6 z-2"
                 skills={oppSkills()}
                 switchActiveButton={null}
                 switchActiveCost={null}
-                shown={true}
+                shown={showOppSkillButtons()}
+                onClick={onOppSkillClick}
               />
             </Show>
           </Show>
-          <FastActionMarker
-            shown={
-              localProps.actionState?.showBackdrop &&
-              localProps.actionState?.isFast &&
-              !showConfirmButton()
-            }
-          />
+          <Show when={localProps.actionState?.showBackdrop}>
+            <BottomHint {...localProps.actionState!} />
+          </Show>
           <ConfirmButton
-            class="absolute top-80% left-50% translate-x--50%"
+            class="place-self-center mt-95"
             step={showConfirmButton()}
             onClick={(step) => {
               localProps.onStepActionState?.(step, selectedDiceValue());
@@ -1876,7 +1944,7 @@ export function Chessboard(props: ChessboardProps) {
             who={localProps.who}
             roundNumber={localProps.data.state.roundNumber}
             currentTurn={localProps.data.state.currentTurn as 0 | 1}
-            class="absolute left-0 w-full top-50% translate-y--50%"
+            class="place-self-center"
             info={localProps.data.roundAndPhase}
           />
           <Show when={localProps.data.notificationBox} keyed>
@@ -1935,70 +2003,69 @@ export function Chessboard(props: ChessboardProps) {
           />
         </Show>
         {/* 上层 UI 组件 */}
-        <Show when={showHistory() || localProps.opp}>
+        <Show when={showHistory()}>
           <HistoryPanel
             who={localProps.who}
             history={localProps.history}
             onBackdropClick={() => setShowHistory(false)}
           />
         </Show>
-        <AspectRatioContainer>
-          <Show when={localProps.opp}>
+        <AspectRatioContainer class="z-6 grid children:grid-area-[1/1] isolate">
+          <Show
+            when={localProps.opp && !(hasSpecialView() && specialViewVisible())}
+          >
             <MiniSpecialViewGroup
-              opp
-              player={localProps.data.state.player[flip(localProps.who)]}
-              selectCardCandidates={localProps.opp?.selectCardCandidates ?? []}
-              viewType={localProps.opp?.viewType ?? "normal"}
-            />
-            <MiniSpecialViewGroup
-              player={localProps.data.state.player[localProps.who]}
-              selectCardCandidates={localProps.selectCardCandidates}
-              viewType={localProps.viewType}
+              who={localProps.who}
+              myViewType={localProps.viewType}
+              oppViewType={localProps.opp?.viewType ?? "normal"}
+              players={localProps.data.state.player}
+              mySelectCardCandidates={localProps.selectCardCandidates}
+              oppSelectCardCandidates={
+                localProps.opp?.selectCardCandidates ?? []
+              }
+              onCardClick={onMiniViewCardClick}
+              onBackDropClick={onChessboardClick}
+              showMyView={hasSpecialView()}
+              showOppView={hasOppSpecialView()}
             />
           </Show>
-          <div class="absolute inset-3 pointer-events-none touch-pan scale-68% translate-x--16% translate-y--16%">
+          <div class="mx-2 my-13 pointer-events-none contain-strict touch-pan card-data-viewer">
             <CardDataViewer />
           </div>
           {/* 右上角部件 */}
-          <Show when={!localProps.liveStreamingMode}>
-            <div class="absolute top-2 right-2 flex flex-row-reverse gap-1.5">
-              <Show when={localProps.data.state.phase !== PbPhaseType.GAME_END}>
-                <ExitButton
-                  onClick={onExit}
-                />
-              </Show>
-              <FullScreenToggleButton
-                isFullScreen={isFullscreen()}
-                onClick={toggleFullscreen}
+          <div class="justify-self-end h-8 m-2 flex flex-row-reverse gap-1.5 items-center">
+            <Show when={localProps.data.state.phase !== PbPhaseType.GAME_END}>
+              <ExitButton onClick={onExit} />
+            </Show>
+            <FullScreenToggleButton
+              isFullScreen={isFullscreen()}
+              onClick={toggleFullscreen}
+            />
+            <HistoryToggleButton onClick={() => setShowHistory((v) => !v)} />
+            <Show when={hasSpecialView() && !localProps.liveStreamingMode}>
+              <SpecialViewToggleButton
+                onClick={() => setSpecialViewVisible((v) => !v)}
               />
-              <HistoryToggleButton onClick={() => setShowHistory((v) => !v)} />
-              <Show when={hasSpecialView()}>
-                <SpecialViewToggleButton
-                  onClick={() => setSpecialViewVisible((v) => !v)}
-                />
-              </Show>
-              <CurrentTurnHint
-                phase={localProps.data.state.phase}
-                opp={localProps.data.state.currentTurn !== localProps.who}
-              />
-              <TimerCapsule timer={timer()} />
-            </div>
-          </Show>
-        </AspectRatioContainer>
-        <Show when={localProps.opp && localProps.liveStreamingMode}>
-          <div class="absolute top-2.5 right-[calc(var(--chessboard-right-offset)+0.625rem)] flex flex-row-reverse gap-2">
-            <div class="h-8 w-24 flex items-center justify-center rounded-full b-2 line-height-none font-bold bg-#e9e2d3 text-black/70 b-black/70">
-              {t("ui.liveStreamingMode")}
-            </div>
+            </Show>
+            <Show when={localProps.liveStreamingMode}>
+              <div class="h-6 min-w-20 px-3 rounded-full text-3.5 text-center line-height-6 font-bold bg-#e9e2d3/70 text-black/70 pointer-events-none select-none">
+                {t("ui.liveStreamingMode")}
+              </div>
+            </Show>
+            <CurrentTurnHint
+              phase={localProps.data.state.phase}
+              opp={localProps.data.state.currentTurn !== localProps.who}
+            />
+            <TimerCapsule timer={timer()} />
           </div>
-        </Show>
+        </AspectRatioContainer>
         <TimerAlert timer={timer()} />
         <Alert />
         <MessageBox />
         {/* game end */}
         <Show when={localProps.data.state.phase === PbPhaseType.GAME_END}>
-          <div class="absolute inset-0 bg-black/85 flex items-center justify-center flex-col z-50">
-            <div class="font-bold text-4xl text-white my-10">
+          <div class="w-full h-full bg-black/85 flex items-center justify-center flex-col z-10">
+            <div class="font-bold text-4xl text-white/70 my-10 select-none">
               {localProps.data.state.winner === localProps.who
                 ? t("ui.gameVictory")
                 : t("ui.gameDefeat")}

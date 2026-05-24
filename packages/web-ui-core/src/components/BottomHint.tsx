@@ -1,4 +1,5 @@
 // Copyright (C) 2025 Guyutongxue
+// Copyright (C) 2026 Piovium Labs
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as
@@ -13,18 +14,22 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-export interface SwitchHandsBackdropProps {
-  onClick?: (e: MouseEvent) => void;
-}
+import { Show } from "solid-js";
+import type { BottomHintConfig } from "../action";
 
-export function SpecialViewBackdrop(props: SwitchHandsBackdropProps) {
+export interface BottomHintProps extends BottomHintConfig {}
+
+export function BottomHint(props: BottomHintProps) {
   return (
-    <div
-      class="absolute inset-0 bg-green-50/90 select-none transform-origin-lc scale-[calc(1/var(--chessboard-opp-scale))] translate-z-0.1"
-      onClick={(e) => {
-        e.stopPropagation();
-        props.onClick?.(e);
-      }}
-    />
+    <Show when={props.bottomHintType !== "none"}>
+      <div
+        class={`place-self-center mt-112
+        text-center text-3.5 font-bold line-height-none px-1
+        rounded-full pointer-events-none select-none bottom-hint`}
+        data-bottom-hint-type={props.bottomHintType}
+      >
+        {props.bottomHintText}
+      </div>
+    </Show>
   );
 }
