@@ -85,7 +85,7 @@ class CardModel extends InitiativeSkillModel implements ICaller {
   versionInfo: VersionInfo = DEFAULT_VERSION_INFO;
 
   getSubId(): number {
-    return getSubId(this.id);
+    return getSubId(this.cardId);
   }
 
   skillList: SkillDefinition[] = [];

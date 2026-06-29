@@ -24,7 +24,6 @@ import {
   registerPassiveSkill,
 } from "../../builder/registry";
 import {
-  DEFAULT_ENTITY_VM_META,
   EntityViewModel,
   type DefaultEntityVMMeta,
 } from "./entity";

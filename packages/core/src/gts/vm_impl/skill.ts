@@ -42,7 +42,6 @@ import {
   type TypedSkillContext,
 } from "../../builder/context/skill";
 import {
-  createVariableConfig,
   DEFAULT_ENTITY_VM_META,
   EntityViewModel,
   type DefaultEntityVMMeta,
@@ -301,7 +300,7 @@ export class TriggeredSkillModel extends SkillModel {
 export interface TriggeredSkillVMMeta extends EntityVMMeta {
   eventArgType: unknown;
 }
-export const DEFAULT_TRIGGERED_SKILL_VM_META = {
+const DEFAULT_TRIGGERED_SKILL_VM_META = {
   ...DEFAULT_ENTITY_VM_META,
   eventArgType: null as never,
 } as const satisfies TriggeredSkillVMMeta;
@@ -446,7 +445,9 @@ class CharacterSkillModel extends InitiativeSkillModel {
 export interface InitiativeSkillVMMeta extends EntityVMMeta {
   readonly targetTypes: InitiativeSkillTargetKind;
 }
-export const DEFAULT_INITIATIVE_SKILL_VM_META = {
+// This variable is type-only but may fell into TDZ after bundling.
+// Declare it as var.
+export var DEFAULT_INITIATIVE_SKILL_VM_META = {
   ...DEFAULT_ENTITY_VM_META,
   targetTypes: [],
 } as const satisfies InitiativeSkillVMMeta;

@@ -298,7 +298,9 @@ export interface EntityVMMeta {
   readonly associatedExtension: ExtensionHandle;
 }
 
-export const DEFAULT_ENTITY_VM_META = {
+// This variable is type-only but may fell into TDZ after bundling.
+// Declare it as var.
+export var DEFAULT_ENTITY_VM_META = {
   type: "" as ExEntityType,
   variables: null as never,
   associatedExtension: null as never,
