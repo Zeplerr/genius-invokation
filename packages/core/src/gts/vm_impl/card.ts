@@ -45,28 +45,22 @@ import type {
   DetailedEventArgOf,
   DetailedEventNames,
   InitiativeSkillTargetKind,
-  ReadonlyMetaOf,
-  StrictInitiativeSkillEventArg,
 } from "../../builder/skill";
 import { CombatFoodVM, FoodVM } from "./entity_auxilary";
-import { $, toExpression, type InferResult, type IQuery } from "../../query";
+import { $ } from "../../query";
 import {
   InitiativeSkillModel,
   InitiativeSkillViewModel,
   TriggeredSkillViewModel,
   type TargetGetter,
-  type TargetQueryTypeInfo,
 } from "./skill";
-import type {
-  SkillContext,
-  TypedSkillContext,
-} from "../../builder/context/skill";
-import type { DiceRequirement, DiceType } from "@gi-tcg/typings";
+import type { SkillContext } from "../../builder/context/skill";
 import { TechniqueViewModel, type TechniqueVMMeta } from "./technique";
 import type { CharacterState, EntityState } from "../../builder";
 import type { IUnorderedQuery } from "../../query/utils";
 import { getSubId } from "./sub_id";
 import { RESERVED, type Reserved, type ReservedMeta } from "./reserved";
+import type { InitiativeSkillEventArg } from "../../base/skill";
 
 const SATIATED_ID = 303300 as StatusHandle;
 
@@ -111,7 +105,7 @@ class CardModel extends InitiativeSkillModel implements ICaller {
   setSupportPlayAction(): void {
     this.action = function (c) {
       // 支援牌的目标是要弃置的支援区卡牌
-      const [target] = c.eventArg.targets as readonly EntityState[];
+      const [target] = c.eventArg.targets;
       if (target && c.query($.id(target.id))) {
         c.dispose(target, {
           reason: "targetOfSupportPlayed",
@@ -430,7 +424,9 @@ export const CardViewModel = InitiativeSkillViewModel
       } else {
         const options = FoodVM.parse(subView);
         if (!options.noSatiated) {
-          model.satiatedTarget = (c) => c.eventArg.targets[0];
+          model.satiatedTarget = (c) => [
+            (c.eventArg as InitiativeSkillEventArg).targets[0],
+          ];
         }
         const injuredOnly = options.injuredOnly ?? false;
         model.targetGetters.push((c) => {
