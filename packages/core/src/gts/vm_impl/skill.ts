@@ -190,7 +190,7 @@ export class TriggeredSkillModel extends SkillModel {
 
   setUsage(count: number, option: GtsUsageOrUsagePerRoundOptions): void {
     const perRound = option.perRound ?? false;
-    const autoDecrease = option.autoDecrease ?? false;
+    const autoDecrease = option.autoDecrease ?? true;
     const name = this.caller.setUsage(count, option);
     if (perRound) {
       if (this.usagePerRoundOpt) {
