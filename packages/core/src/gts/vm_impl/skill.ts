@@ -707,8 +707,11 @@ export const CharacterSkillViewModel = InitiativeSkillViewModel
       uniqueKey(): "type";
     }>((model, [type], subView) => {
       if (type === "passive") {
-        const passiveSkillModel = EntityViewModel.parse(subView, "character");
-        passiveSkillModel.id = model.id;
+        const passiveSkillModel = EntityViewModel.parse(
+          subView,
+          "character",
+          model.id,
+        );
         model.passiveSkillEntry =
           passiveSkillModel.getEntry() as CharacterPassiveSkillEntry;
       } else {
